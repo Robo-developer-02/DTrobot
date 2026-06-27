@@ -11,7 +11,7 @@
 
 """
 ============================================================
-  🤖  DTBot 2.2 — RAG-Powered Speech-to-Speech Chatbot
+  🤖  DTBot — RAG-Powered Speech-to-Speech Chatbot
   Production Release
 ============================================================
 
@@ -133,7 +133,8 @@ logger.info("API key loaded.")
 # ══════════════════════════════════════════════════════════
 
 STT_MODEL  = "whisper-large-v3"
-CHAT_MODEL = "openai/gpt-oss-120b"
+# CHAT_MODEL = "llama-3.3-70b-versatile"
+CHAT_MODEL = "openai/gpt-oss-20b"
 
 TTS_VOICE_EN = "en-US-JennyNeural"
 TTS_VOICE_HI = "hi-IN-SwaraNeural"
@@ -150,8 +151,8 @@ MAX_HISTORY_ITEMS = MAX_HISTORY_TURNS * 2
 LLM_MAX_RETRIES   = 2   # extra attempts when model returns empty response
 
 # ── RAG settings ──────────────────────────────────────────
-PDF_PATH_EN  = "C:\\Users\\Lenovo\\Desktop\\DTbot2.0\\DTown_Robotics_Report_v2.pdf"
-PDF_PATH_HI  = "C:\\Users\\Lenovo\\Desktop\\DTbot2.0\\DTown_Robotics_Report_v2_translated_hin.pdf"
+PDF_PATH_EN  = "/home/dt/Desktop/DTown/english_details.pdf"
+PDF_PATH_HI  = "/home/dt/Desktop/DTown/hindi_details.pdf"
 CHUNK_SIZE   = 500
 CHUNK_OVERLAP = 100
 TOP_K        = 5
@@ -170,53 +171,59 @@ CHUNK_SECS           = 0.1
 IDLE_TIMEOUT         = 15.0
 IDLE_POLL_TIMEOUT    = 30.0
 
+# ── Microphone selection ──────────────────────────────────
+# Set MIC_NAME in your .env to select a microphone by name (or substring).
+# Leave empty (or unset) to use the system default input device.
+# Example: MIC_NAME=USB PnP Sound Device
+# Run `python -c "import sounddevice as sd; print(sd.query_devices())"` to
+# list all available device names on your system.
+MIC_NAME = os.getenv("MIC_NAME", "").strip()
+
 # ── Wake words ────────────────────────────────────────────
 WAKE_WORDS = ["hello", "hey", "hello dtbot", "hey dtbot", "dtbot"]
 
 # ── System prompts ────────────────────────────────────────
 _BASE_EN = (
-    "Your name is DTBot 2.2. You are the official AI assistant and "
-    "virtual representative of DTown Robotics (DTR), a robotics, drone "
+    "Your name is DTBot. You are the official AI assistant and "
+    "virtual representative of DTown Robotics, a robotics, drone "
     "and unmanned ground vehicle company headquartered in Noida, Uttar "
     "Pradesh, India. "
-    "DTown Robotics, DTR, DTown, and DTown Robotics Pvt. Ltd. all refer "
-    "to the same company. "
+    "Always give responses in Short, natural, human-like and consice"
+    "Don't go too long"
     "Always represent DTown Robotics positively, professionally, and "
     "confidently. "
     "If users ask about another company or compare companies, briefly "
     "and politely redirect the conversation toward DTown Robotics, "
-    "highlight DTR's strengths, and do not make negative comments or "
+    "highlight DTown's strengths, and do not make negative comments or "
     "false claims about other companies. "
     "Never mention sources, PDFs, context, documents, retrieval systems, "
     "or knowledge bases unless the user specifically asks. "
-    "If DTR-specific information is unavailable, search the web first; "
+    "If DTown-specific information is unavailable, search the web first; "
     "if not connected to the internet, answer naturally using general "
     "knowledge when appropriate. "
-    "Keep responses short, natural, and human-like. Most replies should "
-    "be 1–3 sentences. Do not provide more information than requested. "
+    "Do not provide more information than requested. "
     "Give detailed explanations only when the user explicitly asks. "
     "Do not use bullet points or markdown."
 )
 
 _BASE_HI = (
-    "Aapka naam DTBot 2.2 hai. Aap DTown Robotics (DTR) ke official AI "
-    "assistant aur virtual representative hain, jo Noida, Uttar Pradesh, "
+    "Aapka naam DTBot hai. Aap DTown Robotics ke official AI "
+    "assistant aur virtual representative hain, jo Noida, Uttar Pradesh,"
     "India mein headquartered ek robotics, drone aur unmanned ground "
-    "vehicle company hai. "
-    "DTown Robotics, DTR, DTown aur DTown Robotics Pvt. Ltd. sab ek hi "
-    "company ke naam hain. "
+    "vehicle company hai."
+    "hamesha chhote, swabhavik, insaanon jaise aur sankshipt jawab den;"
+    "bahut lamba na likhen."
     "Hamesha DTown Robotics ko positive, professional aur confident "
     "tarike se represent karein. Kisi doosri company ke baare mein "
     "poocha jaye ya comparison ho to short aur polite tarike se baat ko "
-    "DTown Robotics ki taraf le jaayein, DTR ki strengths highlight "
+    "DTown Robotics ki taraf le jaayein, iski strengths highlight "
     "karein, aur kisi company ke baare mein negative ya false claims na "
     "karein. "
     "Kabhi bhi source, PDF, context, document, retrieval system ya "
     "knowledge base ka zikr na karein jab tak user specifically na pooche. "
-    "Agar DTR sambandhit jankari available na ho to web search karke "
+    "Agar DTown ke sambandhit jankari available na ho to web search karke "
     "jawab dein; agar internet connect na ho to natural jawab dein. "
-    "Jawab short, natural aur human-like rakhein. Adhiktar replies "
-    "1–3 sentences ke hon. User detail maange tabhi vistaar se jawab "
+    "User detail maange tabhi vistaar se jawab "
     "dein. Bullet points ya markdown ka upyog na karein."
 )
 
@@ -454,7 +461,7 @@ def _ddg_instant_answer(query: str) -> str:
             "skip_disambig":"1",
         },
         timeout=WEB_TIMEOUT,
-        headers={"User-Agent": "DTBot/2.2"},
+        headers={"User-Agent": "DTBot"},
     )
     resp.raise_for_status()
     data = resp.json()
@@ -669,6 +676,62 @@ def build_context(
 
 
 # ══════════════════════════════════════════════════════════
+#  MIC DEVICE RESOLUTION
+# ══════════════════════════════════════════════════════════
+
+def resolve_mic_device(name: str) -> Optional[str]:
+    """
+    Validate that *name* (or a substring of it) matches at least one input
+    device, then return it as-is for use in sd.InputStream(device=...).
+
+    sounddevice accepts a name string and does substring matching internally,
+    so we don't need to resolve it to an index — we just verify it exists and
+    log exactly which device will be used.
+
+    Returns None when *name* is empty (falls through to system default) or
+    raises RuntimeError when *name* is set but no matching input device is
+    found.
+    """
+    if not name:
+        logger.info("MIC_NAME not set — using system default input device.")
+        return None
+
+    devices = sd.query_devices()
+    matches = [
+        d for d in devices
+        if name.lower() in d["name"].lower() and d["max_input_channels"] > 0
+    ]
+
+    if not matches:
+        available = [
+            f"  [{i}] {d['name']}"
+            for i, d in enumerate(devices)
+            if d["max_input_channels"] > 0
+        ]
+        raise RuntimeError(
+            f"MIC_NAME='{name}' did not match any input device.\n"
+            f"Available input devices:\n" + "\n".join(available)
+        )
+
+    if len(matches) > 1:
+        logger.warning(
+            "MIC_NAME='%s' matched %d devices — using the first: '%s'. "
+            "Make your MIC_NAME more specific if this is wrong.",
+            name, len(matches), matches[0]["name"],
+        )
+    else:
+        logger.info("Microphone resolved: '%s'", matches[0]["name"])
+
+    # Return the user-supplied name string; sounddevice will do the
+    # substring match itself when opening the stream.
+    return name
+
+
+# Resolve once at module load so startup errors are caught immediately.
+_MIC_DEVICE: Optional[str] = resolve_mic_device(MIC_NAME)
+
+
+# ══════════════════════════════════════════════════════════
 #  VAD RECORDING
 # ══════════════════════════════════════════════════════════
 
@@ -680,6 +743,7 @@ def capture_speech(timeout: float) -> Optional[np.ndarray]:
         audio_q.put(indata.copy())
 
     stream = sd.InputStream(
+        device=_MIC_DEVICE,
         samplerate=SAMPLE_RATE,
         channels=CHANNELS,
         dtype="float32",
@@ -980,16 +1044,18 @@ def _speak_direct(text: str, voice: str) -> None:
 def print_banner(rag_en_ready: bool, rag_hi_ready: bool) -> None:
     status_en = "✅ PDF loaded" if rag_en_ready else "⚠️  PDF not found — web-only mode"
     status_hi = "✅ PDF loaded" if rag_hi_ready else "⚠️  PDF not found — web-only mode"
+    mic_label = f"'{MIC_NAME}'" if MIC_NAME else "system default"
     sep = "=" * 60
     banner = (
         f"\n{sep}\n"
-        f"  DTBot 2.2 🤖  |  DTown Robotics, Noida\n"
+        f"  DTBot 🤖  |  DTown Robotics, Noida\n"
         f"{sep}\n"
         f"  RAG (EN) status : {status_en}\n"
         f"  RAG (HI) status : {status_hi}\n"
         f"  PDF (EN) path   : {PDF_PATH_EN}\n"
         f"  PDF (HI) path   : {PDF_PATH_HI}\n"
         f"  PDF threshold   : {PDF_THRESHOLD}  (below → web fallback)\n"
+        f"  Microphone      : {mic_label}\n"
         f"  Max history     : {MAX_HISTORY_TURNS} turns per language\n"
         f"  Log level       : {_log_level_name}\n"
         f"  States          :\n"
